@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"regexp"
 	"strings"
 )
 
@@ -19,6 +20,13 @@ func (o *youtubeDlOptions) add(option string, args ...string) {
 
 func (o *youtubeDlOptions) toString() string {
 	return strings.Join(*o, " ")
+}
+
+type YoutubeDlProgress struct {
+	Progress      string
+	FileSize      string
+	DLSpeed       string
+	RemainingTime string
 }
 
 type YoutubeDl struct {
@@ -44,7 +52,7 @@ func (y *YoutubeDl) addUserOptionIfNeeded(o *youtubeDlOptions) {
 	}
 }
 
-func monitorStdout(reader io.Reader) {
+func monitorStdout(reader io.Reader, ch chan interface{}) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Split(func(data []byte, atEOF bool) (advance int, token []byte, err error) {
 		if atEOF && len(data) == 0 {
@@ -59,12 +67,34 @@ func monitorStdout(reader io.Reader) {
 		}
 		return 0, nil, nil
 	})
+	fileNameRegexp := regexp.MustCompile(`\[download\] Destination: (.*)\n`)
+	scanner.Scan()
+
+	strs := fileNameRegexp.FindStringSubmatch(scanner.Text())
+	//fmt.Printf("%s\n", strs)
+
+	ch <- strs[1]
+
+	progressRegexp := regexp.MustCompile(`\[download\]\s+(.*)\s+of\s+(.*)\s+at\s+(.*)\s+ETA\s+(.*)`)
 	for scanner.Scan() {
-		fmt.Printf("\r%s", scanner.Text())
+		str := scanner.Text()
+		strs = progressRegexp.FindStringSubmatch(str)
+		if len(strs) == 0 {
+			continue
+		}
+		progress := &YoutubeDlProgress{
+			Progress:      strs[1],
+			FileSize:      strs[2],
+			DLSpeed:       strs[3],
+			RemainingTime: strs[4],
+		}
+		ch <- progress
+		//fmt.Printf("\r%s", strs)
+		// fmt.Printf("\r%s", scanner.Text())
 	}
 }
 
-func runCommand(cmd *exec.Cmd) error {
+func runCommand(cmd *exec.Cmd, ch chan interface{}) error {
 	outReader, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -75,7 +105,7 @@ func runCommand(cmd *exec.Cmd) error {
 		return err
 	}
 
-	go monitorStdout(outReader)
+	go monitorStdout(outReader, ch)
 
 	err = cmd.Wait()
 	if err != nil {
@@ -84,17 +114,17 @@ func runCommand(cmd *exec.Cmd) error {
 	return nil
 }
 
-func (y *YoutubeDl) Download(url string) error {
+func (y *YoutubeDl) Download(url string, ch chan interface{}) error {
 	options := &youtubeDlOptions{}
 	y.addUserOptionIfNeeded(options)
 	options.add("--format", "'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'")
 	command := fmt.Sprintf("%s %s %s", commandName, options.toString(), url)
 	fmt.Println(command)
 	cmd := exec.Command("bash", "-c", command)
-	return runCommand(cmd)
+	return runCommand(cmd, ch)
 }
 
-func (y *YoutubeDl) DownloadAudio(url, format string) error {
+func (y *YoutubeDl) DownloadAudio(url, format string, ch chan interface{}) error {
 	options := &youtubeDlOptions{}
 	y.addUserOptionIfNeeded(options)
 	options.add("--format", "'bestaudio'")
@@ -104,5 +134,5 @@ func (y *YoutubeDl) DownloadAudio(url, format string) error {
 	command := fmt.Sprintf("%s %s %s", commandName, options.toString(), url)
 	fmt.Println(command)
 	cmd := exec.Command("bash", "-c", command)
-	return runCommand(cmd)
+	return runCommand(cmd, ch)
 }
