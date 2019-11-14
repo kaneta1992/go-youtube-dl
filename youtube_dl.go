@@ -73,6 +73,10 @@ func monitorStdout(reader io.Reader, ch chan interface{}) {
 	strs := fileNameRegexp.FindStringSubmatch(scanner.Text())
 	//fmt.Printf("%s\n", strs)
 
+	if len(strs) == 0 {
+		return
+	}
+
 	ch <- strs[1]
 
 	progressRegexp := regexp.MustCompile(`\[download\]\s+(.*)\s+of\s+(.*)\s+at\s+(.*)\s+ETA\s+(.*)`)
@@ -114,25 +118,59 @@ func runCommand(cmd *exec.Cmd, ch chan interface{}) error {
 	return nil
 }
 
-func (y *YoutubeDl) Download(url string, ch chan interface{}) error {
+func (y *YoutubeDl) createDownloadVideoCommand(url string, simulate bool) *exec.Cmd {
 	options := &youtubeDlOptions{}
 	y.addUserOptionIfNeeded(options)
 	options.add("--format", "'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best'")
+	if simulate {
+		options.add("--simulate")
+	}
 	command := fmt.Sprintf("%s %s %s", commandName, options.toString(), url)
 	fmt.Println(command)
-	cmd := exec.Command("bash", "-c", command)
-	return runCommand(cmd, ch)
+	return exec.Command("bash", "-c", command)
 }
 
-func (y *YoutubeDl) DownloadAudio(url, format string, ch chan interface{}) error {
+func (y *YoutubeDl) Download(url string, ch chan interface{}) error {
+	cmd := y.createDownloadVideoCommand(url, false)
+	err := runCommand(cmd, ch)
+	if err != nil {
+		ch <- err
+		return err
+	}
+	return nil
+}
+
+func (y *YoutubeDl) DownloadSimulate(url string) error {
+	cmd := y.createDownloadVideoCommand(url, true)
+	return cmd.Run()
+}
+
+func (y *YoutubeDl) createDownloadAudioCommand(url, format string, simulate bool) *exec.Cmd {
 	options := &youtubeDlOptions{}
 	y.addUserOptionIfNeeded(options)
 	options.add("--format", "'bestaudio'")
 	options.add("--audio-format", format)
 	options.add("--audio-quality", "0")
 	options.add("--extract-audio", "")
+	if simulate {
+		options.add("--simulate")
+	}
 	command := fmt.Sprintf("%s %s %s", commandName, options.toString(), url)
 	fmt.Println(command)
-	cmd := exec.Command("bash", "-c", command)
-	return runCommand(cmd, ch)
+	return exec.Command("bash", "-c", command)
+}
+
+func (y *YoutubeDl) DownloadAudio(url, format string, ch chan interface{}) error {
+	cmd := y.createDownloadAudioCommand(url, format, false)
+	err := runCommand(cmd, ch)
+	if err != nil {
+		ch <- err
+		return err
+	}
+	return nil
+}
+
+func (y *YoutubeDl) DownloadAudioSimulate(url, format string) error {
+	cmd := y.createDownloadAudioCommand(url, format, true)
+	return cmd.Run()
 }
